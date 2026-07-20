@@ -13,3 +13,4 @@
 
 pub mod blitter;
 pub mod stats;
+pub mod thresh;
