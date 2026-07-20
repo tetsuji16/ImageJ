@@ -201,6 +201,99 @@ impl ByteProcessor {
         self.roi_width = self.width;
         self.roi_height = self.height;
     }
+
+    // ---- Column / row accessors (mirror ImageProcessor.getColumn/PutColumn) ----
+
+    /// Reads a vertical run of pixels starting at (x, y). Mirrors
+    /// `getColumn(int, int, int[], int)` (uses `getPixel`, so OOB -> 0).
+    pub fn get_column(&self, x: i32, y: i32, length: usize) -> Vec<u8> {
+        let mut data = vec![0u8; length];
+        let mut yy = y;
+        for i in 0..length {
+            data[i] = self.get_pixel(x, yy);
+            yy += 1;
+        }
+        data
+    }
+
+    /// Writes a vertical run of pixels starting at (x, y). Mirrors
+    /// `putColumn` (uses `set_pixel`, clamping + OOB ignored).
+    pub fn put_column(&mut self, x: i32, y: i32, data: &[u8]) {
+        let mut yy = y;
+        for &v in data {
+            self.set_pixel(x, yy, v as i32);
+            yy += 1;
+        }
+    }
+
+    /// Reads a horizontal run of pixels starting at (x, y). Mirrors `getRow`.
+    pub fn get_row(&self, x: i32, y: i32, length: usize) -> Vec<u8> {
+        let mut data = vec![0u8; length];
+        let mut xx = x;
+        for i in 0..length {
+            data[i] = self.get_pixel(xx, y);
+            xx += 1;
+        }
+        data
+    }
+
+    /// Writes a horizontal run of pixels starting at (x, y). Mirrors `putRow`.
+    pub fn put_row(&mut self, x: i32, y: i32, data: &[u8]) {
+        let mut xx = x;
+        for &v in data {
+            self.set_pixel(xx, y, v as i32);
+            xx += 1;
+        }
+    }
+
+    // ---- Pixel transforms (ROI-aware, mirror ImageProcessor/ByteProcessor) ----
+
+    /// Inverts the image within the ROI: `v -> 255 - v`. Mirrors
+    /// `invert()` (which routes through `process(INVERT, 0.0)`).
+    pub fn invert(&mut self) {
+        let rx = self.roi_x;
+        let ry = self.roi_y;
+        let rw = self.roi_width;
+        let rh = self.roi_height;
+        for y in ry..(ry + rh) {
+            let base = y * self.width + rx;
+            for x in 0..rw {
+                let i = base + x;
+                self.pixels[i] = 255 - self.pixels[i];
+            }
+        }
+    }
+
+    /// Flips the image vertically within the ROI (top<->bottom rows).
+    /// Mirrors `ByteProcessor.flipVertical`.
+    pub fn flip_vertical(&mut self) {
+        let rx = self.roi_x;
+        let ry = self.roi_y;
+        let rw = self.roi_width;
+        let rh = self.roi_height;
+        for y in 0..(rh / 2) {
+            let idx1 = (ry + y) * self.width + rx;
+            let idx2 = (ry + rh - 1 - y) * self.width + rx;
+            for i in 0..rw {
+                self.pixels.swap(idx1 + i, idx2 + i);
+            }
+        }
+    }
+
+    /// Flips the image horizontally within the ROI (left<->right columns).
+    /// Mirrors `ImageProcessor.flipHorizontal` (via getColumn/putColumn).
+    pub fn flip_horizontal(&mut self) {
+        let rx = self.roi_x;
+        let ry = self.roi_y;
+        let rw = self.roi_width;
+        let rh = self.roi_height;
+        for x in 0..(rw / 2) {
+            let col1 = self.get_column((rx + x) as i32, ry as i32, rh);
+            let col2 = self.get_column((rx + rw - x - 1) as i32, ry as i32, rh);
+            self.put_column((rx + x) as i32, ry as i32, &col2);
+            self.put_column((rx + rw - x - 1) as i32, ry as i32, &col1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -303,5 +396,55 @@ mod tests {
         assert_eq!(p2.get_min(), 40);
         assert_eq!(p2.get_max(), 200);
         assert_eq!(p2.width, 5);
+    }
+
+    #[test]
+    fn column_row_accessors() {
+        let bp = ByteProcessor::from_pixels(3, 2, vec![1, 2, 3, 4, 5, 6]);
+        // column x=1 starting y=0 length 2 -> [2,5]
+        assert_eq!(bp.get_column(1, 0, 2), vec![2, 5]);
+        // row y=0 starting x=0 length 3 -> [1,2,3]
+        assert_eq!(bp.get_row(0, 0, 3), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn invert_full() {
+        let mut bp = ByteProcessor::from_pixels(2, 2, vec![1, 2, 3, 4]);
+        bp.invert();
+        assert_eq!(bp.pixels, vec![254, 253, 252, 251]);
+    }
+
+    #[test]
+    fn flip_vertical_full() {
+        let mut bp = ByteProcessor::from_pixels(2, 2, vec![1, 2, 3, 4]);
+        bp.flip_vertical();
+        assert_eq!(bp.pixels, vec![3, 4, 1, 2]);
+    }
+
+    #[test]
+    fn flip_horizontal_full() {
+        let mut bp = ByteProcessor::from_pixels(2, 2, vec![1, 2, 3, 4]);
+        bp.flip_horizontal();
+        assert_eq!(bp.pixels, vec![2, 1, 4, 3]);
+    }
+
+    #[test]
+    fn invert_respects_roi() {
+        // 3x3, only middle row in ROI -> only it inverts
+        let mut bp = ByteProcessor::from_pixels(
+            3,
+            3,
+            vec![
+                10, 10, 10, // row 0
+                20, 20, 20, // row 1 (ROI)
+                30, 30, 30, // row 2
+            ],
+        );
+        bp.set_roi(0, 1, 3, 1);
+        bp.invert();
+        assert_eq!(
+            bp.pixels,
+            vec![10, 10, 10, 235, 235, 235, 30, 30, 30]
+        );
     }
 }
