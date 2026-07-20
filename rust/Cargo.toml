@@ -1,0 +1,14 @@
+# ImageJ → Rust port workspace
+# Forked from https://github.com/imagej/ImageJ (public domain / CC0)
+# Each Java package under ij/ maps to a crate under rust/.
+[workspace]
+resolver = "2"
+members = [
+    "imagej-core",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "CC0-1.0"   # ImageJ is public domain; port inherits CC0
+repository = "https://github.com/tetsuji16/ImageJ"
