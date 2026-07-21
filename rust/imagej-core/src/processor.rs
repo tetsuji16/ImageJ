@@ -296,6 +296,308 @@ impl ByteProcessor {
     }
 }
 
+// =============================================================================
+// ShortProcessor — 16-bit unsigned image
+// =============================================================================
+
+/// A 16-bit unsigned image processor.
+#[derive(Debug, Clone)]
+pub struct ShortProcessor {
+    pub width: usize,
+    pub height: usize,
+    pub pixels: Vec<u16>,
+
+    /// Displayed LUT min (Java `min`), init 0.
+    pub min: i32,
+    /// Displayed LUT max (Java `max`), init 65535.
+    pub max: i32,
+
+    roi_x: usize,
+    roi_y: usize,
+    roi_width: usize,
+    roi_height: usize,
+}
+
+impl ShortProcessor {
+    /// Creates a blank `width x height` image, zero-initialized.
+    pub fn new(width: usize, height: usize) -> Self {
+        let n = width * height;
+        ShortProcessor {
+            width,
+            height,
+            pixels: vec![0u16; n],
+            min: 0,
+            max: 65535,
+            roi_x: 0,
+            roi_y: 0,
+            roi_width: width,
+            roi_height: height,
+        }
+    }
+
+    /// Returns the pixel value at (x,y), or 0 if out of bounds.
+    pub fn get_pixel(&self, x: i32, y: i32) -> u16 {
+        if x >= 0 && (x as usize) < self.width && y >= 0 && (y as usize) < self.height {
+            self.pixels[y as usize * self.width + x as usize]
+        } else {
+            0
+        }
+    }
+
+    /// Sets the pixel at (x,y); ignored if out of bounds. Values are clamped 0..65535.
+    pub fn set_pixel(&mut self, x: i32, y: i32, value: i32) {
+        if x >= 0 && (x as usize) < self.width && y >= 0 && (y as usize) < self.height {
+            let v = if value > 65535 {
+                65535
+            } else if value < 0 {
+                0
+            } else {
+                value
+            };
+            self.pixels[y as usize * self.width + x as usize] = v as u16;
+        }
+    }
+
+    /// 65536-bin histogram over the entire image ROI.
+    pub fn get_histogram(&self) -> [u32; 65536] {
+        let mut hist = [0u32; 65536];
+        for y in self.roi_y..(self.roi_y + self.roi_height) {
+            let base = y * self.width + self.roi_x;
+            for x in 0..self.roi_width {
+                hist[self.pixels[base + x] as usize] += 1;
+            }
+        }
+        hist
+    }
+
+    /// Returns the displayed LUT range [min, max].
+    pub fn set_min_and_max(&mut self, min: f64, max: f64) {
+        if max < min {
+            return;
+        }
+        self.min = min.round() as i32;
+        self.max = max.round() as i32;
+        // Clamp to valid 16-bit range
+        if self.min < 0 {
+            self.min = 0;
+        }
+        if self.max > 65535 {
+            self.max = 65535;
+        }
+    }
+
+    pub fn get_min(&self) -> i32 {
+        self.min
+    }
+
+    pub fn get_max(&self) -> i32 {
+        self.max
+    }
+
+    pub fn reset_roi(&mut self) {
+        self.roi_x = 0;
+        self.roi_y = 0;
+        self.roi_width = self.width;
+        self.roi_height = self.height;
+    }
+}
+
+// =============================================================================
+// FloatProcessor — 32-bit floating-point image
+// =============================================================================
+
+/// A 32-bit floating-point image processor.
+#[derive(Debug, Clone)]
+pub struct FloatProcessor {
+    pub width: usize,
+    pub height: usize,
+    pub pixels: Vec<f32>,
+
+    pub min: f64,
+    pub max: f64,
+
+    roi_x: usize,
+    roi_y: usize,
+    roi_width: usize,
+    roi_height: usize,
+}
+
+impl FloatProcessor {
+    /// Creates a blank `width x height` image, zero-initialized.
+    pub fn new(width: usize, height: usize) -> Self {
+        let n = width * height;
+        FloatProcessor {
+            width,
+            height,
+            pixels: vec![0.0_f32; n],
+            min: f64::NAN,
+            max: f64::NAN,
+            roi_x: 0,
+            roi_y: 0,
+            roi_width: width,
+            roi_height: height,
+        }
+    }
+
+    /// Returns the pixel value at (x,y), or `f32::NAN` if out of bounds.
+    pub fn get_pixel(&self, x: i32, y: i32) -> f32 {
+        if x >= 0 && (x as usize) < self.width && y >= 0 && (y as usize) < self.height {
+            self.pixels[y as usize * self.width + x as usize]
+        } else {
+            f32::NAN
+        }
+    }
+
+    /// Sets the pixel at (x,y); ignored if out of bounds.
+    pub fn set_pixel(&mut self, x: i32, y: i32, value: f64) {
+        if x >= 0 && (x as usize) < self.width && y >= 0 && (y as usize) < self.height {
+            self.pixels[y as usize * self.width + x as usize] = value as f32;
+        }
+    }
+
+    /// Returns pixel values for histogramming over the ROI. Values are scaled
+    /// to 65536 bins based on min/max if set.
+    pub fn get_histogram(&self) -> [u32; 65536] {
+        let mut hist = [0u32; 65536];
+        let min = if self.min.is_nan() {
+            self.pixels.iter().filter(|v| !v.is_nan()).cloned().fold(f32::INFINITY, f32::min) as f64
+        } else {
+            self.min
+        };
+        let max = if self.max.is_nan() {
+            self.pixels.iter().filter(|v| !v.is_nan()).cloned().fold(f32::NEG_INFINITY, f32::max) as f64
+        } else {
+            self.max
+        };
+        let range = max - min;
+        if range == 0.0 {
+            return hist;
+        }
+        let scale = 65535.0 / range;
+        for y in self.roi_y..(self.roi_y + self.roi_height) {
+            let base = y * self.width + self.roi_x;
+            for x in 0..self.roi_width {
+                let v = self.pixels[base + x] as f64;
+                if v.is_nan() {
+                    continue;
+                }
+                let bin = ((v - min) * scale).round() as usize;
+                if bin < 65536 {
+                    hist[bin] += 1;
+                }
+            }
+        }
+        hist
+    }
+
+    pub fn set_min_and_max(&mut self, min: f64, max: f64) {
+        self.min = min;
+        self.max = max;
+    }
+
+    pub fn reset_roi(&mut self) {
+        self.roi_x = 0;
+        self.roi_y = 0;
+        self.roi_width = self.width;
+        self.roi_height = self.height;
+    }
+}
+
+// =============================================================================
+// ColorProcessor — 32-bit ARGB image
+// =============================================================================
+
+/// A 32-bit ARGB color image processor.
+#[derive(Debug, Clone)]
+pub struct ColorProcessor {
+    pub width: usize,
+    pub height: usize,
+    pub pixels: Vec<u32>,
+    pub min: i32,
+    pub max: i32,
+
+    roi_x: usize,
+    roi_y: usize,
+    roi_width: usize,
+    roi_height: usize,
+}
+
+impl ColorProcessor {
+    /// Creates a blank `width x height` image, zero-initialized (transparent).
+    pub fn new(width: usize, height: usize) -> Self {
+        let n = width * height;
+        ColorProcessor {
+            width,
+            height,
+            pixels: vec![0_u32; n],
+            min: 0,
+            max: 255,
+            roi_x: 0,
+            roi_y: 0,
+            roi_width: width,
+            roi_height: height,
+        }
+    }
+
+    /// Returns the ARGB pixel at (x,y), or 0 (transparent) if out of bounds.
+    pub fn get_pixel(&self, x: i32, y: i32) -> u32 {
+        if x >= 0 && (x as usize) < self.width && y >= 0 && (y as usize) < self.height {
+            self.pixels[y as usize * self.width + x as usize]
+        } else {
+            0
+        }
+    }
+
+    /// Sets the ARGB pixel at (x,y); ignored if out of bounds.
+    pub fn set_pixel(&mut self, x: i32, y: i32, argb: u32) {
+        if x >= 0 && (x as usize) < self.width && y >= 0 && (y as usize) < self.height {
+            self.pixels[y as usize * self.width + x as usize] = argb;
+        }
+    }
+
+    /// Extracts the red channel (0-255) from ARGB.
+    pub fn get_red(&self, argb: u32) -> u8 {
+        ((argb >> 16) & 0xff) as u8
+    }
+
+    /// Extracts the green channel (0-255) from ARGB.
+    pub fn get_green(&self, argb: u32) -> u8 {
+        ((argb >> 8) & 0xff) as u8
+    }
+
+    /// Extracts the blue channel (0-255) from ARGB.
+    pub fn get_blue(&self, argb: u32) -> u8 {
+        (argb & 0xff) as u8
+    }
+
+    /// Creates an ARGB value from (alpha, red, green, blue) components.
+    pub fn make_argb(a: u8, r: u8, g: u8, b: u8) -> u32 {
+        ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+    }
+
+    /// Converts to grayscale ByteProcessor (simple average).
+    pub fn to_byte(&self) -> ByteProcessor {
+        let mut bp = ByteProcessor::new(self.width, self.height);
+        for i in 0..self.pixels.len() {
+            let p = self.pixels[i];
+            let gray = ((p >> 16) & 0xff + (p >> 8) & 0xff + p & 0xff) / 3;
+            bp.pixels[i] = gray as u8;
+        }
+        bp
+    }
+
+    pub fn reset_roi(&mut self) {
+        self.roi_x = 0;
+        self.roi_y = 0;
+        self.roi_width = self.width;
+        self.roi_height = self.height;
+    }
+}
+
+// =============================================================================
+// Unit tests
+// =============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
