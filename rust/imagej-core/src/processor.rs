@@ -39,7 +39,7 @@ pub struct ByteProcessor {
 impl ByteProcessor {
     /// Creates a blank `width x height` image, zero-initialized.
     pub fn new(width: usize, height: usize) -> Self {
-        let n = width * height;
+        let n = width.checked_mul(height).expect("image dimensions overflow");
         ByteProcessor {
             width,
             height,
@@ -56,10 +56,19 @@ impl ByteProcessor {
     /// Creates a processor that takes ownership of `pixels` (length must be
     /// `width*height`).
     pub fn from_pixels(width: usize, height: usize, pixels: Vec<u8>) -> Self {
-        assert_eq!(pixels.len(), width * height, "pixel length mismatch");
-        let mut bp = Self::new(width, height);
-        bp.pixels = pixels;
-        bp
+        let expected = width.checked_mul(height).expect("image dimensions overflow");
+        assert_eq!(pixels.len(), expected, "pixel length mismatch");
+        ByteProcessor {
+            width,
+            height,
+            pixels,
+            min: 0,
+            max: 255,
+            roi_x: 0,
+            roi_y: 0,
+            roi_width: width,
+            roi_height: height,
+        }
     }
 
     /// Returns the pixel value (0-255) at the given index, no bounds check.
@@ -321,11 +330,28 @@ pub struct ShortProcessor {
 impl ShortProcessor {
     /// Creates a blank `width x height` image, zero-initialized.
     pub fn new(width: usize, height: usize) -> Self {
-        let n = width * height;
+        let n = width.checked_mul(height).expect("image dimensions overflow");
         ShortProcessor {
             width,
             height,
             pixels: vec![0u16; n],
+            min: 0,
+            max: 65535,
+            roi_x: 0,
+            roi_y: 0,
+            roi_width: width,
+            roi_height: height,
+        }
+    }
+
+    /// Takes ownership of a pixel array (length must be `width*height`).
+    pub fn from_pixels(width: usize, height: usize, pixels: Vec<u16>) -> Self {
+        let expected = width.checked_mul(height).expect("image dimensions overflow");
+        assert_eq!(pixels.len(), expected, "pixel length mismatch");
+        ShortProcessor {
+            width,
+            height,
+            pixels,
             min: 0,
             max: 65535,
             roi_x: 0,
@@ -425,11 +451,28 @@ pub struct FloatProcessor {
 impl FloatProcessor {
     /// Creates a blank `width x height` image, zero-initialized.
     pub fn new(width: usize, height: usize) -> Self {
-        let n = width * height;
+        let n = width.checked_mul(height).expect("image dimensions overflow");
         FloatProcessor {
             width,
             height,
             pixels: vec![0.0_f32; n],
+            min: f64::NAN,
+            max: f64::NAN,
+            roi_x: 0,
+            roi_y: 0,
+            roi_width: width,
+            roi_height: height,
+        }
+    }
+
+    /// Takes ownership of a pixel array (length must be `width*height`).
+    pub fn from_pixels(width: usize, height: usize, pixels: Vec<f32>) -> Self {
+        let expected = width.checked_mul(height).expect("image dimensions overflow");
+        assert_eq!(pixels.len(), expected, "pixel length mismatch");
+        FloatProcessor {
+            width,
+            height,
+            pixels,
             min: f64::NAN,
             max: f64::NAN,
             roi_x: 0,
@@ -525,11 +568,28 @@ pub struct ColorProcessor {
 impl ColorProcessor {
     /// Creates a blank `width x height` image, zero-initialized (transparent).
     pub fn new(width: usize, height: usize) -> Self {
-        let n = width * height;
+        let n = width.checked_mul(height).expect("image dimensions overflow");
         ColorProcessor {
             width,
             height,
             pixels: vec![0_u32; n],
+            min: 0,
+            max: 255,
+            roi_x: 0,
+            roi_y: 0,
+            roi_width: width,
+            roi_height: height,
+        }
+    }
+
+    /// Takes ownership of a pixel array (length must be `width*height`).
+    pub fn from_pixels(width: usize, height: usize, pixels: Vec<u32>) -> Self {
+        let expected = width.checked_mul(height).expect("image dimensions overflow");
+        assert_eq!(pixels.len(), expected, "pixel length mismatch");
+        ColorProcessor {
+            width,
+            height,
+            pixels,
             min: 0,
             max: 255,
             roi_x: 0,
@@ -580,7 +640,10 @@ impl ColorProcessor {
         let mut bp = ByteProcessor::new(self.width, self.height);
         for i in 0..self.pixels.len() {
             let p = self.pixels[i];
-            let gray = ((p >> 16) & 0xff + (p >> 8) & 0xff + p & 0xff) / 3;
+            let red = (p >> 16) & 0xff;
+            let green = (p >> 8) & 0xff;
+            let blue = p & 0xff;
+            let gray = (red + green + blue) / 3;
             bp.pixels[i] = gray as u8;
         }
         bp
@@ -748,5 +811,16 @@ mod tests {
             bp.pixels,
             vec![10, 10, 10, 235, 235, 235, 30, 30, 30]
         );
+    }
+
+    #[test]
+    fn color_to_byte_averages_rgb_channels() {
+        let cp = ColorProcessor::from_pixels(
+            3,
+            1,
+            vec![0xff30_0000, 0xff00_6000, 0xff00_0090],
+        );
+
+        assert_eq!(cp.to_byte().pixels, vec![16, 32, 48]);
     }
 }

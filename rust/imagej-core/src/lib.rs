@@ -12,6 +12,7 @@
 //! - No PII / no personal data in any generated file.
 
 pub mod blitter;
+pub mod io;
 pub mod processor;
 pub mod stats;
 pub mod thresh;

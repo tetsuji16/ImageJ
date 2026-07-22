@@ -7,6 +7,4 @@ repository.workspace = true
 description = "Rust port of ij.process — ImageJ core image processing (public domain)"
 
 [dependencies]
-# Planned deps for later stages:
-# image = "0.25"      # image I/O (TIFF/PNG) — mirrors ij.io
-# ndarray = "0.16"    # n-D buffers — mirrors ImageProcessor pixel arrays
+image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
