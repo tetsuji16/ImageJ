@@ -161,19 +161,19 @@ impl ByteProcessor {
         bp
     }
 
-    /// 256-bin histogram over the current ROI. Mirrors `getHistogram()`
-    /// (no mask). Delegates to the pure `histogram_8bit` helper over the ROI
-    /// sub-region, keeping parity with `ByteStatistics`.
-    pub fn get_histogram(&self) -> [u32; 256] {
-        let mut hist = [0u32; 256];
-        for y in self.roi_y..(self.roi_y + self.roi_height) {
-            let base = y * self.width + self.roi_x;
-            for x in 0..self.roi_width {
-                hist[self.pixels[base + x] as usize] += 1;
+    /// 65536-bin histogram over the current ROI (only first 256 bins used for 8-bit).
+        /// Mirrors `getHistogram()` (no mask). Delegates to the pure `histogram_8bit` helper
+        /// over the ROI sub-region, keeping parity with `ByteStatistics`.
+        pub fn get_histogram(&self) -> [u32; 65536] {
+            let mut hist = [0u32; 65536];
+            for y in self.roi_y..(self.roi_y + self.roi_height) {
+                let base = y * self.width + self.roi_x;
+                for x in 0..self.roi_width {
+                    hist[self.pixels[base + x] as usize] += 1;
+                }
             }
+            hist
         }
-        hist
-    }
 
     /// Smallest displayed value (LUT min). Mirrors `getMin()`.
     pub fn get_min(&self) -> i32 {

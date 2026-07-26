@@ -8,3 +8,4 @@ description = "Rust port of ij.process — ImageJ core image processing (public 
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
+serde = { version = "1.0", features = ["derive"] }
