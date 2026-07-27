@@ -13,6 +13,7 @@
 
 pub mod binary;
 pub mod blitter;
+pub mod converter;
 pub mod ij_core;
 pub mod io;
 pub mod lut;

@@ -401,6 +401,13 @@ impl ImagePlus {
         }
     }
 
+    /// Sets the processor for a single-image (non-stack) ImagePlus,
+    /// updating the image type accordingly.
+    pub fn set_processor(&mut self, ip: ImageData) {
+        self.image_type = ImageType::from_processor(&ip);
+        self.processor = Some(ip);
+    }
+
     /// Sets the current slice (1-based).
     pub fn set_slice(&mut self, slice: usize) {
         let max = self.get_stack_size();

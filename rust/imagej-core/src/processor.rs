@@ -635,7 +635,9 @@ impl ColorProcessor {
         ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
     }
 
-    /// Converts to grayscale ByteProcessor (simple average).
+    /// Converts to grayscale ByteProcessor using the Rec. 601 luminance
+    /// weights (0.299 R + 0.587 G + 0.114 B), matching ImageJ's
+    /// `ColorProcessor.convertToByte`.
     pub fn to_byte(&self) -> ByteProcessor {
         let mut bp = ByteProcessor::new(self.width, self.height);
         for i in 0..self.pixels.len() {
@@ -643,8 +645,8 @@ impl ColorProcessor {
             let red = (p >> 16) & 0xff;
             let green = (p >> 8) & 0xff;
             let blue = p & 0xff;
-            let gray = (red + green + blue) / 3;
-            bp.pixels[i] = gray as u8;
+            let gray = (red as f32 * 0.299 + green as f32 * 0.587 + blue as f32 * 0.114) as u8;
+            bp.pixels[i] = gray;
         }
         bp
     }
@@ -654,6 +656,199 @@ impl ColorProcessor {
         self.roi_y = 0;
         self.roi_width = self.width;
         self.roi_height = self.height;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Type conversions (mirrors ImageProcessor.convertToByte/Short/Float/RGB).
+// Placed in their own impl blocks so the core processors stay focused.
+// -----------------------------------------------------------------------------
+
+impl ByteProcessor {
+    /// Converts to 16-bit (byte values are copied directly into u16).
+    pub fn to_short(&self) -> ShortProcessor {
+        ShortProcessor::from_pixels(
+            self.width,
+            self.height,
+            self.pixels.iter().map(|&v| v as u16).collect(),
+        )
+    }
+
+    /// Converts to 32-bit float (identity values).
+    pub fn to_float(&self) -> FloatProcessor {
+        FloatProcessor::from_pixels(
+            self.width,
+            self.height,
+            self.pixels.iter().map(|&v| v as f32).collect(),
+        )
+    }
+
+    /// Converts to 24-bit RGB (gray replicated to R=G=B, alpha=255).
+    pub fn to_rgb(&self) -> ColorProcessor {
+        let mut cp = ColorProcessor::new(self.width, self.height);
+        for i in 0..self.pixels.len() {
+            let v = self.pixels[i] as u32;
+            cp.pixels[i] = 0xff000000 | (v << 16) | (v << 8) | v;
+        }
+        cp
+    }
+}
+
+impl ShortProcessor {
+    /// Converts to 8-bit. When `do_scaling`, the min/max display range maps
+    /// to 0-255; otherwise values are divided by 257 (the 8-bit high byte).
+    pub fn to_byte(&self, do_scaling: bool) -> ByteProcessor {
+        let mut bp = ByteProcessor::new(self.width, self.height);
+        if do_scaling {
+            let min = self.min as f64;
+            let max = self.max as f64;
+            let range = max - min;
+            if range > 0.0 {
+                for i in 0..self.pixels.len() {
+                    let v = self.pixels[i] as f64;
+                    let t = (v - min) / range;
+                    bp.pixels[i] = (t * 255.0) as u8;
+                }
+                return bp;
+            }
+        }
+        for i in 0..self.pixels.len() {
+            bp.pixels[i] = (self.pixels[i] / 257) as u8;
+        }
+        bp
+    }
+
+    /// Converts to 32-bit float (identity values).
+    pub fn to_float(&self) -> FloatProcessor {
+        FloatProcessor::from_pixels(
+            self.width,
+            self.height,
+            self.pixels.iter().map(|&v| v as f32).collect(),
+        )
+    }
+
+    /// Converts to 24-bit RGB (gray replicated to R=G=B, alpha=255).
+    pub fn to_rgb(&self) -> ColorProcessor {
+        let mut cp = ColorProcessor::new(self.width, self.height);
+        for i in 0..self.pixels.len() {
+            let v = (self.pixels[i] >> 8) as u32;
+            cp.pixels[i] = 0xff000000 | (v << 16) | (v << 8) | v;
+        }
+        cp
+    }
+}
+
+impl FloatProcessor {
+    /// Returns the actual data min/max (ignoring NaN), computing it on demand
+    /// when `self.min`/`self.max` are NaN. Mirrors ImageJ's `getMin`/`getMax`.
+    fn effective_min_max(&self) -> (f64, f64) {
+        let mut min = if self.min.is_nan() {
+            f64::INFINITY
+        } else {
+            self.min
+        };
+        let mut max = if self.max.is_nan() {
+            f64::NEG_INFINITY
+        } else {
+            self.max
+        };
+        if self.min.is_nan() || self.max.is_nan() {
+            for &v in &self.pixels {
+                if v.is_nan() {
+                    continue;
+                }
+                if v < min as f32 {
+                    min = v as f64;
+                }
+                if v > max as f32 {
+                    max = v as f64;
+                }
+            }
+            if min == f64::INFINITY {
+                min = 0.0;
+            }
+            if max == f64::NEG_INFINITY {
+                max = 0.0;
+            }
+        }
+        (min, max)
+    }
+
+    /// Converts to 8-bit. When `do_scaling`, the min/max display range maps
+    /// to 0-255; otherwise raw values are clamped to 0-255.
+    pub fn to_byte(&self, do_scaling: bool) -> ByteProcessor {
+        let mut bp = ByteProcessor::new(self.width, self.height);
+        let (min, max) = self.effective_min_max();
+        let use_range = do_scaling && (max - min) > 0.0;
+        for i in 0..self.pixels.len() {
+            let v = self.pixels[i] as f64;
+            let g = if use_range {
+                ((v - min) / (max - min) * 255.0).round()
+            } else {
+                v
+            };
+            bp.pixels[i] = g.clamp(0.0, 255.0) as u8;
+        }
+        bp
+    }
+
+    /// Converts to 16-bit. When `do_scaling`, the min/max range maps to
+    /// 0-65535; otherwise raw values are clamped to 0-65535.
+    pub fn to_short(&self, do_scaling: bool) -> ShortProcessor {
+        let mut sp = ShortProcessor::new(self.width, self.height);
+        let (min, max) = self.effective_min_max();
+        let use_range = do_scaling && (max - min) > 0.0;
+        for i in 0..self.pixels.len() {
+            let v = self.pixels[i] as f64;
+            let g = if use_range {
+                ((v - min) / (max - min) * 65535.0).round()
+            } else {
+                v
+            };
+            sp.pixels[i] = g.clamp(0.0, 65535.0) as u16;
+        }
+        sp
+    }
+
+    /// Converts to 24-bit RGB (gray replicated to R=G=B, alpha=255).
+    pub fn to_rgb(&self) -> ColorProcessor {
+        let gray = self.to_byte(true);
+        gray.to_rgb()
+    }
+}
+
+impl ColorProcessor {
+    /// Converts to 16-bit (average of RGB channels, scaled to full range).
+    pub fn to_short(&self) -> ShortProcessor {
+        let mut sp = ShortProcessor::new(self.width, self.height);
+        for i in 0..self.pixels.len() {
+            let p = self.pixels[i];
+            let r = (p >> 16) & 0xff;
+            let g = (p >> 8) & 0xff;
+            let b = p & 0xff;
+            let gray = ((r + g + b) / 3) as u32;
+            sp.pixels[i] = (gray * 257).min(65535) as u16;
+        }
+        sp
+    }
+
+    /// Converts to 32-bit float (average of RGB channels).
+    pub fn to_float(&self) -> FloatProcessor {
+        let mut fp = FloatProcessor::new(self.width, self.height);
+        for i in 0..self.pixels.len() {
+            let p = self.pixels[i];
+            let r = (p >> 16) & 0xff;
+            let g = (p >> 8) & 0xff;
+            let b = p & 0xff;
+            fp.pixels[i] = ((r + g + b) / 3) as f32;
+        }
+        fp
+    }
+
+    /// Identity: returns a copy (already RGB). Mirrors `convertToRGB` on a
+    /// ColorProcessor.
+    pub fn to_rgb(&self) -> ColorProcessor {
+        self.clone()
     }
 }
 
@@ -815,12 +1010,8 @@ mod tests {
 
     #[test]
     fn color_to_byte_averages_rgb_channels() {
-        let cp = ColorProcessor::from_pixels(
-            3,
-            1,
-            vec![0xff30_0000, 0xff00_6000, 0xff00_0090],
-        );
-
-        assert_eq!(cp.to_byte().pixels, vec![16, 32, 48]);
+        let cp = ColorProcessor::from_pixels(3, 1, vec![0xff30_0000, 0xff00_6000, 0xff00_0090]);
+        // Rec.601 luminance: 0.299*R + 0.587*G + 0.114*B
+        assert_eq!(cp.to_byte().pixels, vec![14, 56, 16]);
     }
 }
