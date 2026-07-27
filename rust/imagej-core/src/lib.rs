@@ -11,9 +11,11 @@
 //! - Keep each translated unit testable against the Java reference behavior.
 //! - No PII / no personal data in any generated file.
 
+pub mod binary;
 pub mod blitter;
 pub mod ij_core;
 pub mod io;
+pub mod lut;
 pub mod processor;
 pub mod stats;
 pub mod thresh;
