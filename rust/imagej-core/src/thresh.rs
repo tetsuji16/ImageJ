@@ -611,7 +611,7 @@ pub fn intermodes(data: &[u32]) -> i32 {
     let mut ihisto: Vec<f64> = data.iter().map(|&v| v as f64).collect();
     let mut iter = 0;
     while !bimodal_test(&ihisto) {
-        let mut previous = 0.0;
+        let mut previous;
         let mut current = 0.0;
         let mut next = ihisto[0];
         for i in 0..(n - 1) {
@@ -983,7 +983,7 @@ pub fn triangle(data: &[u32]) -> i32 {
     }
 
     let mut inverted = false;
-    let (mut min, mut max) = if (max - min) < (min2 - max) {
+    let (min, max) = if (max - min) < (min2 - max) {
         inverted = true;
         let mut left = 0usize;
         let mut right = n - 1;
@@ -1027,7 +1027,7 @@ pub fn triangle(data: &[u32]) -> i32 {
             left += 1;
             right -= 1;
         }
-        (n as i32 - 1 - split)
+        n as i32 - 1 - split
     } else {
         split
     }

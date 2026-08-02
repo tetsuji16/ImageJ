@@ -272,37 +272,6 @@ impl ByteProcessor {
             }
         }
     }
-
-    /// Flips the image vertically within the ROI (top<->bottom rows).
-    /// Mirrors `ByteProcessor.flipVertical`.
-    pub fn flip_vertical(&mut self) {
-        let rx = self.roi_x;
-        let ry = self.roi_y;
-        let rw = self.roi_width;
-        let rh = self.roi_height;
-        for y in 0..(rh / 2) {
-            let idx1 = (ry + y) * self.width + rx;
-            let idx2 = (ry + rh - 1 - y) * self.width + rx;
-            for i in 0..rw {
-                self.pixels.swap(idx1 + i, idx2 + i);
-            }
-        }
-    }
-
-    /// Flips the image horizontally within the ROI (left<->right columns).
-    /// Mirrors `ImageProcessor.flipHorizontal` (via getColumn/putColumn).
-    pub fn flip_horizontal(&mut self) {
-        let rx = self.roi_x;
-        let ry = self.roi_y;
-        let rw = self.roi_width;
-        let rh = self.roi_height;
-        for x in 0..(rw / 2) {
-            let col1 = self.get_column((rx + x) as i32, ry as i32, rh);
-            let col2 = self.get_column((rx + rw - x - 1) as i32, ry as i32, rh);
-            self.put_column((rx + x) as i32, ry as i32, &col2);
-            self.put_column((rx + rw - x - 1) as i32, ry as i32, &col1);
-        }
-    }
 }
 
 // =============================================================================
@@ -695,25 +664,46 @@ impl ByteProcessor {
 }
 
 impl ShortProcessor {
+    /// Returns the actual data min/max when the display range is still at the
+    /// default (0..65535, i.e. never set) — mirroring ImageJ's `getMinAndMax`,
+    /// which scans the pixels when the min/max have not been explicitly set.
+    fn effective_min_max(&self) -> (f64, f64) {
+        if self.min == 0 && self.max == 65535 {
+            if self.pixels.is_empty() {
+                return (0.0, 0.0);
+            }
+            let mut mn = self.pixels[0] as f64;
+            let mut mx = self.pixels[0] as f64;
+            for &v in &self.pixels[1..] {
+                let v = v as f64;
+                if v < mn {
+                    mn = v;
+                }
+                if v > mx {
+                    mx = v;
+                }
+            }
+            (mn, mx)
+        } else {
+            (self.min as f64, self.max as f64)
+        }
+    }
+
     /// Converts to 8-bit. When `do_scaling`, the min/max display range maps
-    /// to 0-255; otherwise values are divided by 257 (the 8-bit high byte).
+    /// to 0-255 (using the actual data range when min/max were never set, like
+    /// ImageJ); otherwise values take their high byte (`/ 257`).
     pub fn to_byte(&self, do_scaling: bool) -> ByteProcessor {
         let mut bp = ByteProcessor::new(self.width, self.height);
-        if do_scaling {
-            let min = self.min as f64;
-            let max = self.max as f64;
-            let range = max - min;
-            if range > 0.0 {
-                for i in 0..self.pixels.len() {
-                    let v = self.pixels[i] as f64;
-                    let t = (v - min) / range;
-                    bp.pixels[i] = (t * 255.0) as u8;
-                }
-                return bp;
-            }
-        }
+        let (min, max) = self.effective_min_max();
+        let use_range = do_scaling && (max - min) > 0.0;
         for i in 0..self.pixels.len() {
-            bp.pixels[i] = (self.pixels[i] / 257) as u8;
+            let v = self.pixels[i] as f64;
+            let g = if use_range {
+                ((v - min) / (max - min) * 255.0).round()
+            } else {
+                v / 257.0
+            };
+            bp.pixels[i] = g.clamp(0.0, 255.0) as u8;
         }
         bp
     }
@@ -852,6 +842,104 @@ impl ColorProcessor {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Geometric operations (mirror ImageProcessor.flipHorizontal/flipVertical/
+// rotate90Degrees). Implemented via the generic helpers in `geo`.
+// -----------------------------------------------------------------------------
+
+impl ByteProcessor {
+    /// Returns a left-right flipped copy.
+    pub fn flip_horizontal(&self) -> ByteProcessor {
+        let mut bp = ByteProcessor::new(self.width, self.height);
+        bp.pixels = crate::geo::flip_horizontal(&self.pixels, self.width, self.height);
+        bp
+    }
+
+    /// Returns a top-bottom flipped copy.
+    pub fn flip_vertical(&self) -> ByteProcessor {
+        let mut bp = ByteProcessor::new(self.width, self.height);
+        bp.pixels = crate::geo::flip_vertical(&self.pixels, self.width, self.height);
+        bp
+    }
+
+    /// Returns a 90° clockwise rotated copy (dimensions swap).
+    pub fn rotate90_cw(&self) -> ByteProcessor {
+        let mut bp = ByteProcessor::new(self.height, self.width);
+        bp.pixels = crate::geo::rotate90_cw(&self.pixels, self.width, self.height);
+        bp
+    }
+
+    /// Applies a 256-entry lookup table in place (8-bit only).
+    pub fn apply_table(&mut self, table: &[u8; 256]) {
+        for p in &mut self.pixels {
+            *p = table[*p as usize];
+        }
+    }
+}
+
+impl ShortProcessor {
+    pub fn flip_horizontal(&self) -> ShortProcessor {
+        let mut sp = ShortProcessor::new(self.width, self.height);
+        sp.pixels = crate::geo::flip_horizontal(&self.pixels, self.width, self.height);
+        sp
+    }
+    pub fn flip_vertical(&self) -> ShortProcessor {
+        let mut sp = ShortProcessor::new(self.width, self.height);
+        sp.pixels = crate::geo::flip_vertical(&self.pixels, self.width, self.height);
+        sp
+    }
+    pub fn rotate90_cw(&self) -> ShortProcessor {
+        let mut sp = ShortProcessor::new(self.height, self.width);
+        sp.pixels = crate::geo::rotate90_cw(&self.pixels, self.width, self.height);
+        sp
+    }
+    pub fn duplicate(&self) -> ShortProcessor {
+        self.clone()
+    }
+}
+
+impl FloatProcessor {
+    pub fn flip_horizontal(&self) -> FloatProcessor {
+        let mut fp = FloatProcessor::new(self.width, self.height);
+        fp.pixels = crate::geo::flip_horizontal(&self.pixels, self.width, self.height);
+        fp
+    }
+    pub fn flip_vertical(&self) -> FloatProcessor {
+        let mut fp = FloatProcessor::new(self.width, self.height);
+        fp.pixels = crate::geo::flip_vertical(&self.pixels, self.width, self.height);
+        fp
+    }
+    pub fn rotate90_cw(&self) -> FloatProcessor {
+        let mut fp = FloatProcessor::new(self.height, self.width);
+        fp.pixels = crate::geo::rotate90_cw(&self.pixels, self.width, self.height);
+        fp
+    }
+    pub fn duplicate(&self) -> FloatProcessor {
+        self.clone()
+    }
+}
+
+impl ColorProcessor {
+    pub fn flip_horizontal(&self) -> ColorProcessor {
+        let mut cp = ColorProcessor::new(self.width, self.height);
+        cp.pixels = crate::geo::flip_horizontal(&self.pixels, self.width, self.height);
+        cp
+    }
+    pub fn flip_vertical(&self) -> ColorProcessor {
+        let mut cp = ColorProcessor::new(self.width, self.height);
+        cp.pixels = crate::geo::flip_vertical(&self.pixels, self.width, self.height);
+        cp
+    }
+    pub fn rotate90_cw(&self) -> ColorProcessor {
+        let mut cp = ColorProcessor::new(self.height, self.width);
+        cp.pixels = crate::geo::rotate90_cw(&self.pixels, self.width, self.height);
+        cp
+    }
+    pub fn duplicate(&self) -> ColorProcessor {
+        self.clone()
+    }
+}
+
 // =============================================================================
 // Unit tests
 // =============================================================================
@@ -976,15 +1064,15 @@ mod tests {
 
     #[test]
     fn flip_vertical_full() {
-        let mut bp = ByteProcessor::from_pixels(2, 2, vec![1, 2, 3, 4]);
-        bp.flip_vertical();
+        let bp = ByteProcessor::from_pixels(2, 2, vec![1, 2, 3, 4]);
+        let bp = bp.flip_vertical();
         assert_eq!(bp.pixels, vec![3, 4, 1, 2]);
     }
 
     #[test]
     fn flip_horizontal_full() {
-        let mut bp = ByteProcessor::from_pixels(2, 2, vec![1, 2, 3, 4]);
-        bp.flip_horizontal();
+        let bp = ByteProcessor::from_pixels(2, 2, vec![1, 2, 3, 4]);
+        let bp = bp.flip_horizontal();
         assert_eq!(bp.pixels, vec![2, 1, 4, 3]);
     }
 

@@ -5,7 +5,7 @@
 //! or represented as optional/placeholder types.
 
 use crate::io::ImageData;
-use crate::processor::{ByteProcessor, ColorProcessor, FloatProcessor, ShortProcessor};
+use crate::processor::ByteProcessor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
